@@ -17,6 +17,10 @@ pins keeps versions of your data in a shared folder. You only need four function
 Every save creates a new version with a title. Old versions are never overwritten, so any of them
 can be retrieved at any time. There's no git, no server, and nothing to install besides the package.
 
+**One thing pins doesn't record on its own is who saved each version.** This tutorial adds it with
+a small helper, `save_version()`, because knowing who made a version matters as much as knowing
+when. [Step 3](#who-saved-this-version) explains why.
+
 ## Before you start
 
 The practice in [Step 4](#step-4--practise-on-your-laptop) needs nothing: it runs on your laptop.
@@ -156,6 +160,32 @@ board folder
 only need `pin_upload()` and `pin_download()`. Use `pin_write()` and `pin_read()` when your data
 lives in R as a data frame. The practice shows both.
 
+### Who saved this version?
+
+When several people save versions of the same data, **who** saved a version is as important as
+**when**:
+
+- **Questions go to the right person.** If a number looks wrong in October's portfolio, you know
+  exactly who to ask about it, instead of asking the whole team.
+- **Mistakes are traced and fixed quickly.** You can see whether a problem came with one person's
+  upload, and check their other versions too.
+- **Reviews and audits ask for it.** "Who changed this input, and when?" is one of the first
+  questions an auditor or a reviewer asks.
+- **It builds trust in shared data.** People rely on a dataset more when they can see who stands
+  behind each version.
+
+pins records the date of each version, but **not who saved it**. This tutorial fixes that with two
+small helpers that you'll use everywhere:
+
+- **`save_version()`** saves a file or a data frame, and always records your Windows login name as
+  the author. You never have to type it.
+- **`history()`** lists every version with its date, its **author** and its title.
+
+> **An honest limit.** The author is the login name of the computer that saved the version. That's
+> reliable for everyday teamwork, but it is self-reported, so it's not tamper-proof evidence. If you
+> need that, for example for regulated outputs, ask your cloud administrator to switch on AWS
+> CloudTrail logging for the bucket: it records which AWS user uploaded each file.
+
 ---
 
 ## Step 4 – Practise on your laptop
@@ -169,25 +199,34 @@ running each part with **Ctrl+Enter**. The complete script is also in
 
 ### Part A: versions of a data frame
 
-**1. Create the practice board**, and a small helper that shows the history with titles:
+**1. Create the practice board and the two helpers** from [Who saved this version?](#who-saved-this-version):
 
 ```r
 library(pins)
 board <- board_folder("C:/pins-practice", versioned = TRUE)
 
+# Save a new version of a file or a data frame, always recording who saved it
+save_version <- function(x, name, title, type = "rds") {
+  who <- list(author = Sys.info()[["user"]])
+  if (is.data.frame(x)) {
+    pin_write(board, x, name = name, type = type, title = title, metadata = who)
+  } else {
+    pin_upload(board, x, name = name, title = title, metadata = who)
+  }
+}
+
+# Every version of a pin, newest first, with who saved it and its title
 history <- function(name) {
   v <- pin_versions(board, name)
-  v$title <- vapply(v$version, function(id) {
-    title <- pin_meta(board, name, version = id)$title
-    if (is.null(title)) "" else title
-  }, character(1))
-  v[order(v$created, decreasing = TRUE), c("version", "created", "title")]
+  meta <- lapply(v$version, function(id) pin_meta(board, name, version = id))
+  v$author <- vapply(meta, function(m) if (is.null(m$user$author)) "unknown" else m$user$author, character(1))
+  v$title  <- vapply(meta, function(m) if (is.null(m$title)) "" else m$title, character(1))
+  v[order(v$created, decreasing = TRUE), c("version", "created", "author", "title")]
 }
 ```
 
-`versioned = TRUE` keeps every version: always use it. `pin_versions()` on its own lists IDs and
-dates but not titles, which is why `history()` adds them. The same helper is in the team's
-`connect.R`, so it works the same way in real work.
+`versioned = TRUE` keeps every version: always use it. The same two helpers are in the team's
+`connect.R`, so everything you practise here works the same way in real work.
 
 **2. Save a first version.**
 
@@ -197,17 +236,19 @@ portfolio <- data.frame(
   exposure_m = c(25, 40, 18, 12, 30)
 )
 
-pin_write(board, portfolio, name = "client-portfolio", type = "rds",
-          title = "Client portfolio, September")
+save_version(portfolio, name = "client-portfolio", title = "Client portfolio, September")
 ```
+
+Behind the scenes, `save_version()` runs `pin_write()` for a data frame, or `pin_upload()` for a
+file, and adds `metadata = list(author = Sys.info()[["user"]])`. That one argument is what records
+who saved the version.
 
 **3. Change the data and save a second version.**
 
 ```r
 portfolio$exposure_m[portfolio$company == "Echo Airlines"] <- 45
 
-pin_write(board, portfolio, name = "client-portfolio", type = "rds",
-          title = "Client portfolio, October")
+save_version(portfolio, name = "client-portfolio", title = "Client portfolio, October")
 ```
 
 **4. See the history.**
@@ -216,13 +257,16 @@ pin_write(board, portfolio, name = "client-portfolio", type = "rds",
 history("client-portfolio")
 ```
 
-**You should see** two versions, newest first, something like:
+**You should see** two versions, newest first, each with **who saved it**, something like:
 
 ```
-                 version             created                       title
-2 20260930T101844Z-7d0b5 2026-09-30 10:18:44   Client portfolio, October
-1 20260930T101512Z-a41c9 2026-09-30 10:15:12 Client portfolio, September
+                 version             created author                       title
+2 20260930T101844Z-7d0b5 2026-09-30 10:18:44 jsmith   Client portfolio, October
+1 20260930T101512Z-a41c9 2026-09-30 10:15:12 jsmith Client portfolio, September
 ```
+
+Here `jsmith` stands for your own Windows login name. On the team's board, this column shows
+which colleague saved each version.
 
 **5. Get the latest and the old version, and compare.** Copy the September ID from your output:
 
@@ -237,18 +281,20 @@ latest$exposure_m - september$exposure_m
 
 ### Part B: versions of a file
 
-The same with a file, using `pin_upload()` and `pin_download()`:
+The same with a file: `save_version()` to save it, and `pin_download()` to get it back.
 
 ```r
 dir.create("C:/pins-practice-files", showWarnings = FALSE)
 write.csv(portfolio, "C:/pins-practice-files/portfolio.csv", row.names = FALSE)
 
-pin_upload(board, "C:/pins-practice-files/portfolio.csv", name = "portfolio-file",
-           title = "Portfolio file, October")
+save_version("C:/pins-practice-files/portfolio.csv", name = "portfolio-file",
+             title = "Portfolio file, October")
 
 path <- pin_download(board, "portfolio-file")
 read.csv(path)
 ```
+
+`save_version()` sees that you gave it a file path, not a data frame, so it uses `pin_upload()`.
 
 `pin_download()` returns the path of a local copy that pins keeps in its cache. Read it, but don't
 edit it: save changes as a new version instead.
@@ -260,9 +306,8 @@ edit it: save changes as a new version instead.
 
 ```r
 portfolio$exposure_m[portfolio$company == "Blue Wind"] <- 35
-pin_write(board, portfolio, name = "client-portfolio", type = "rds",
-          title = "Client portfolio, November")
-history("client-portfolio")   # three versions
+save_version(portfolio, name = "client-portfolio", title = "Client portfolio, November")
+history("client-portfolio")   # three versions, all with your name
 ```
 </details>
 
@@ -280,6 +325,19 @@ pins notices the content hasn't changed, prints a message, and doesn't create a 
 pin_list(board)
 pin_meta(board, "client-portfolio")      # latest version; add version = "..." for another one
 ```
+</details>
+
+<details>
+<summary><b>4.</b> Someone saves a version with plain <code>pin_write()</code> instead of <code>save_version()</code>. What does the history show?</summary>
+
+```r
+pin_write(board, portfolio, name = "client-portfolio", type = "rds",
+          title = "Saved without the helper")
+history("client-portfolio")
+```
+
+The newest version's author is **`unknown`**. Nothing is broken, but nobody can tell who saved it.
+That's why the team always saves with `save_version()`.
 </details>
 
 ---
@@ -325,19 +383,30 @@ board <- board_s3(
   versioned = TRUE
 )
 
+# Save a new version of a file or a data frame, always recording who saved it
+save_version <- function(x, name, title, type = "rds") {
+  who <- list(author = Sys.info()[["user"]])
+  if (is.data.frame(x)) {
+    pin_write(board, x, name = name, type = type, title = title, metadata = who)
+  } else {
+    pin_upload(board, x, name = name, title = title, metadata = who)
+  }
+}
+
+# Every version of a pin, newest first, with who saved it and its title
 history <- function(name) {
   v <- pin_versions(board, name)
-  v$title <- vapply(v$version, function(id) {
-    title <- pin_meta(board, name, version = id)$title
-    if (is.null(title)) "" else title
-  }, character(1))
-  v[order(v$created, decreasing = TRUE), c("version", "created", "title")]
+  meta <- lapply(v$version, function(id) pin_meta(board, name, version = id))
+  v$author <- vapply(meta, function(m) if (is.null(m$user$author)) "unknown" else m$user$author, character(1))
+  v$title  <- vapply(meta, function(m) if (is.null(m$title)) "" else m$title, character(1))
+  v[order(v$created, decreasing = TRUE), c("version", "created", "author", "title")]
 }
 ```
 
 **Why a separate file?** Every pins function needs the `board` object, and R forgets it whenever
 the session restarts. `connect.R` recreates it in one line, `source("connect.R")`, with the same
-bucket and settings for everyone.
+bucket and settings for everyone, and the same `save_version()` and `history()` helpers, so every
+version on the board records who saved it.
 
 **4. Make it automatic.** R runs a file called `.Rprofile` whenever it starts in a folder. Create
 `.Rprofile` in your project folder containing:
@@ -371,21 +440,24 @@ The board is ready as soon as R starts. Then:
 path <- pin_download(board, "client-portfolio")
 ```
 
-**2. Save a new version**, always with the same name and a new title:
+**2. Save a new version**, always with `save_version()`, the same name and a new title:
 
 ```r
-pin_upload(board, "C:/data/client-portfolio.xlsx", name = "client-portfolio",
-           title = "Client portfolio, October 2026")
+save_version("C:/data/client-portfolio.xlsx", name = "client-portfolio",
+             title = "Client portfolio, October 2026")
 ```
 
 [`examples/save-new-version.R`](examples/save-new-version.R) wraps this in a script: change its
 three lines and run it with **Ctrl+Shift+S**.
 
-**3. See the history.**
+**3. See the history**, with who saved each version:
 
 ```r
 history("client-portfolio")
 ```
+
+Before you use a dataset, glance at the latest version's author and title. If something looks
+unexpected, you know who to ask.
 
 **4. Get an old version**, with its ID from the history:
 
@@ -393,14 +465,16 @@ history("client-portfolio")
 path <- pin_download(board, "client-portfolio", version = "<version-id>")
 ```
 
-For data frames, use `pin_write()` and `pin_read()` in the same way.
+For data frames, `save_version()` works the same way, and you read them back with `pin_read()`.
 
 ---
 
 ## Five rules to remember
 
 1. **Always use the same name** for the same data. A new name starts a new pin, with no history.
-2. **Always give a title**, such as "Client portfolio, October 2026". It's what `history()` shows.
+2. **Always save with `save_version()`**, never with `pin_upload()` or `pin_write()` directly. It
+   records who saved the version. Give every version a clear title, such as "Client portfolio,
+   October 2026".
 3. **Never edit a downloaded file in place.** It's pins' cached copy. Work on a copy, then save it
    as a new version.
 4. **Sharing with Python or Excel users?** Save data frames with `type = "csv"`, or `"parquet"` for
@@ -434,6 +508,7 @@ becomes the latest. pins has no permissions of its own: access is controlled by 
 | `Access Denied` or `403 Forbidden` | Your keys don't give access to that bucket or folder, or the region is wrong | Check the bucket, `prefix` and `region` in `connect.R` with your team lead. |
 | VS Code can't find R | The R extension doesn't know where R is installed | Set `r.rterm.windows` to the path of `R.exe` ([Step 1](#step-1--set-up-vs-code-for-r)). |
 | Ctrl+Enter does nothing | The R extension isn't installed, or the file isn't saved as `.R` | Install the extension by REditorSupport, and save the file with a `.R` ending. |
+| `history()` shows `unknown` as the author | That version was saved with plain `pin_upload()` or `pin_write()` | Nothing to fix for the past. From now on, save with `save_version()`. |
 | A message that the pin's hash hasn't changed | You saved identical content | Not an error: pins didn't store a duplicate. |
 | A Python colleague can't read your pin | It was saved as `"rds"` | Save it again with `type = "csv"`. |
 
@@ -445,10 +520,9 @@ becomes the latest. pins has no permissions of its own: access is controlled by 
 |---|---|
 | Connect to the team's board | `source("connect.R")`, or automatically with `.Rprofile` |
 | Practice board on your laptop | `board <- board_folder("C:/pins-practice", versioned = TRUE)` |
-| Save a file | `pin_upload(board, "<file>", name = "<name>", title = "<what it is>")` |
-| Save a data frame | `pin_write(board, df, name = "<name>", type = "rds", title = "<what it is>")` |
+| Save a file or a data frame, with your name | `save_version(<file or df>, name = "<name>", title = "<what it is>")` |
 | Get the latest file / data frame | `pin_download(board, "<name>")` / `pin_read(board, "<name>")` |
-| See the history, with titles | `history("<name>")` |
+| See the history: date, author, title | `history("<name>")` |
 | Get an old version | add `version = "<version-id>"` to `pin_download` or `pin_read` |
 | List every pin | `pin_list(board)` |
 

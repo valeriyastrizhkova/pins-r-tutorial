@@ -1,4 +1,6 @@
-# connect.R: connects to the team's shared board on S3.
+# connect.R: connects to the team's shared board on S3, and adds two helpers:
+#   save_version()  saves a file or a data frame, always recording who saved it
+#   history()       lists every version with its date, author and title
 # Run it with source("connect.R"), or automatically with the .Rprofile in this folder.
 # Fill in the bucket, folder and region once (ask your team lead).
 
@@ -13,12 +15,21 @@ board <- board_s3(
   versioned = TRUE                 # keep every version: never change this to FALSE
 )
 
-# history("client-portfolio"): every version of a pin, newest first, with its title
+# Save a new version of a file or a data frame, always recording who saved it
+save_version <- function(x, name, title, type = "rds") {
+  who <- list(author = Sys.info()[["user"]])
+  if (is.data.frame(x)) {
+    pin_write(board, x, name = name, type = type, title = title, metadata = who)
+  } else {
+    pin_upload(board, x, name = name, title = title, metadata = who)
+  }
+}
+
+# Every version of a pin, newest first, with who saved it and its title
 history <- function(name) {
   v <- pin_versions(board, name)
-  v$title <- vapply(v$version, function(id) {
-    title <- pin_meta(board, name, version = id)$title
-    if (is.null(title)) "" else title
-  }, character(1))
-  v[order(v$created, decreasing = TRUE), c("version", "created", "title")]
+  meta <- lapply(v$version, function(id) pin_meta(board, name, version = id))
+  v$author <- vapply(meta, function(m) if (is.null(m$user$author)) "unknown" else m$user$author, character(1))
+  v$title  <- vapply(meta, function(m) if (is.null(m$title)) "" else m$title, character(1))
+  v[order(v$created, decreasing = TRUE), c("version", "created", "author", "title")]
 }

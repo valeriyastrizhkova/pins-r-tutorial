@@ -3,37 +3,44 @@
 
 library(pins)
 
-# ---- Part A: versions of a data frame -------------------------------------
+# ---- Setup: the practice board and the two helpers ------------------------
 
-# 1. The practice board, and a helper that shows the history with titles
 board <- board_folder("C:/pins-practice", versioned = TRUE)
 
-history <- function(name) {
-  v <- pin_versions(board, name)
-  v$title <- vapply(v$version, function(id) {
-    title <- pin_meta(board, name, version = id)$title
-    if (is.null(title)) "" else title
-  }, character(1))
-  v[order(v$created, decreasing = TRUE), c("version", "created", "title")]
+# Save a new version of a file or a data frame, always recording who saved it
+save_version <- function(x, name, title, type = "rds") {
+  who <- list(author = Sys.info()[["user"]])
+  if (is.data.frame(x)) {
+    pin_write(board, x, name = name, type = type, title = title, metadata = who)
+  } else {
+    pin_upload(board, x, name = name, title = title, metadata = who)
+  }
 }
 
-# 2. Save a first version
+# Every version of a pin, newest first, with who saved it and its title
+history <- function(name) {
+  v <- pin_versions(board, name)
+  meta <- lapply(v$version, function(id) pin_meta(board, name, version = id))
+  v$author <- vapply(meta, function(m) if (is.null(m$user$author)) "unknown" else m$user$author, character(1))
+  v$title  <- vapply(meta, function(m) if (is.null(m$title)) "" else m$title, character(1))
+  v[order(v$created, decreasing = TRUE), c("version", "created", "author", "title")]
+}
+
+# ---- Part A: versions of a data frame -------------------------------------
+
 portfolio <- data.frame(
   company    = c("Alpine Steel", "Blue Wind", "Coastal Cement", "Delta Retail", "Echo Airlines"),
   exposure_m = c(25, 40, 18, 12, 30)
 )
-pin_write(board, portfolio, name = "client-portfolio", type = "rds",
-          title = "Client portfolio, September")
+save_version(portfolio, name = "client-portfolio", title = "Client portfolio, September")
 
-# 3. Change the data and save a second version
 portfolio$exposure_m[portfolio$company == "Echo Airlines"] <- 45
-pin_write(board, portfolio, name = "client-portfolio", type = "rds",
-          title = "Client portfolio, October")
+save_version(portfolio, name = "client-portfolio", title = "Client portfolio, October")
 
-# 4. See the history: two versions, newest first
+# The history: date, author (your Windows login name) and title of every version
 history("client-portfolio")
 
-# 5. Get the latest and the old version, and compare (paste the September ID)
+# Get the latest and the old version, and compare (paste the September ID)
 latest    <- pin_read(board, "client-portfolio")
 september <- pin_read(board, "client-portfolio", version = "<September ID>")
 latest$exposure_m - september$exposure_m      # 0 0 0 0 15
@@ -43,8 +50,8 @@ latest$exposure_m - september$exposure_m      # 0 0 0 0 15
 dir.create("C:/pins-practice-files", showWarnings = FALSE)
 write.csv(portfolio, "C:/pins-practice-files/portfolio.csv", row.names = FALSE)
 
-pin_upload(board, "C:/pins-practice-files/portfolio.csv", name = "portfolio-file",
-           title = "Portfolio file, October")
+save_version("C:/pins-practice-files/portfolio.csv", name = "portfolio-file",
+             title = "Portfolio file, October")
 
 path <- pin_download(board, "portfolio-file")
 read.csv(path)
